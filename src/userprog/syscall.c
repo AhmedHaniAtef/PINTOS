@@ -7,11 +7,12 @@
 #include "threads/synch.h"
 
 // lock for synchronization between files during each system call 
-static struct lock files_sys_lock;               
+static struct lock FilesSysLock;               
 
 static void syscall_handler (struct intr_frame *);
 
 struct files_held* get_file(int fd);
+void read_from_input_buffer (void *buffer, int size);
 
 // handler for each system call in phase 2 
 void exit_handler(struct intr_frame *cur_frame);
@@ -33,7 +34,7 @@ syscall_init (void)
 {
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 
-  lock_init(&files_sys_lock);
+  lock_init(&FilesSysLock);
 }
 
 static void
@@ -131,6 +132,7 @@ exit_handler(struct intr_frame *cur_frame)
 {
   if (ptr_valid(cur_frame->esp+4))
     syscall_exit(-1);
+
   int status = *((int*)cur_frame->esp + 1);
   syscall_exit(status);
 }
@@ -146,13 +148,15 @@ exec_handler(struct intr_frame *cur_frame)
 { 
   if (ptr_valid(cur_frame->esp+4))
     syscall_exit(-1);
+
   char* process_name = (char*)(*((int*)cur_frame->esp + 1));
 
   if (process_name == NULL) 
     syscall_exit(-1);
-  lock_acquire(&files_sys_lock);
+
+  lock_acquire(&FilesSysLock);
   cur_frame->eax = sys_exec(process_name);
-  lock_release(&files_sys_lock);
+  lock_release(&FilesSysLock);
 }
 
 int
@@ -166,6 +170,7 @@ wait_handler(struct intr_frame *cur_frame)
 {
   if (ptr_valid(cur_frame->esp+4))
     syscall_exit(-1);
+
   int tid = *((int*)cur_frame->esp + 1);
 
   cur_frame->eax = sys_wait(tid);
@@ -174,13 +179,12 @@ wait_handler(struct intr_frame *cur_frame)
 bool
 sys_create(char* name, size_t size)
 {
-  bool res;
-  lock_acquire(&files_sys_lock);
+  bool ret;
 
-  res = filesys_create(name,size);
-
-  lock_release(&files_sys_lock);
-  return res;
+  lock_acquire(&FilesSysLock);
+  ret = filesys_create(name,size);
+  lock_release(&FilesSysLock);
+  return ret;
 }
 
 void
@@ -204,11 +208,11 @@ bool
 sys_remove(char* name)
 {
   bool res;
-  lock_acquire(&files_sys_lock);
+  lock_acquire(&FilesSysLock);
 
   res = filesys_remove(name);
 
-  lock_release(&files_sys_lock);
+  lock_release(&FilesSysLock);
   return res;
 }
 
@@ -235,13 +239,13 @@ sys_open(char* name)
     palloc_free_page(open);
     return -1;
   }
-  lock_acquire(&files_sys_lock);
+
+  lock_acquire(&FilesSysLock);
   open->file_ptr = filesys_open(name);
-  lock_release(&files_sys_lock);
+  lock_release(&FilesSysLock);
+  
   if (open->file_ptr == NULL)
-  {
     return -1;
-  }
   open->fd = ++thread_current()->fd_last;
   list_push_back(&thread_current()->files_held_list,&open->elem);
   return open->fd;
@@ -255,7 +259,8 @@ open_handler(struct intr_frame *cur_frame)
 
   char* name = (char*)(*((int*)cur_frame->esp + 1));
 
-  if (name == NULL) syscall_exit(-1);
+  if (name == NULL) 
+    syscall_exit(-1);
 
   cur_frame->eax = sys_open(name);
 }
@@ -264,17 +269,16 @@ int
 sys_filesize(int fd)
 {
   struct thread* t = thread_current();
-  struct file* my_file = get_file(fd)->file_ptr;
+  struct file* file = get_file(fd)->file_ptr;
 
-  if (my_file == NULL)
-  {
+  if (file == NULL)
     return -1;
-  }
-  int res;
-  lock_acquire(&files_sys_lock);
-  res = file_length(my_file);
-  lock_release(&files_sys_lock);
-  return res;
+
+  int ret;
+  lock_acquire(&FilesSysLock);
+  ret = file_length(file);
+  lock_release(&FilesSysLock);
+  return ret;
 }
 
 void
@@ -282,40 +286,43 @@ filesize_handler(struct intr_frame *cur_frame)
 {
   if (ptr_valid(cur_frame->esp+4))
     syscall_exit(-1);
+
   int fd = *((int*)cur_frame->esp + 1);
 
   cur_frame->eax = sys_filesize(fd);
 }
 
 int
-sys_read(int fd,void* buffer, int size)
+sys_read(int fd,void* buf, int size)
 {
   if (fd == 0)
   {
-    
-    for (size_t i = 0; i < size; i++)
-    {
-      lock_acquire(&files_sys_lock);
-      ((char*)buffer)[i] = input_getc();
-      lock_release(&files_sys_lock);
-    }
+    read_from_input_buffer(buf,size);
     return size;
-    
-  } else {
-
+  } 
+  else 
+  {
     struct thread* t = thread_current();
     struct file* my_file = get_file(fd)->file_ptr;
 
     if (my_file == NULL)
-    {
       return -1;
-    }
     int res;
-    lock_acquire(&files_sys_lock);
-    res = file_read(my_file,buffer,size);
-    lock_release(&files_sys_lock);
+    lock_acquire(&FilesSysLock);
+    res = file_read(my_file, buf, size);
+    lock_release(&FilesSysLock);
     return res;
     
+  }
+}
+
+void read_from_input_buffer (void *buf, int size)
+{
+  for (size_t i = 0; i < size; i++)
+  {
+    lock_acquire(&FilesSysLock);
+    ((char*)buf)[i] = input_getc();
+    lock_release(&FilesSysLock);
   }
 }
 
@@ -346,14 +353,13 @@ sys_write(int fd, void* buffer, int size)
 
   if (fd == 1)
   {
-    
-    lock_acquire(&files_sys_lock);
+    lock_acquire(&FilesSysLock);
     putbuf(buffer,size);
-    lock_release(&files_sys_lock);
+    lock_release(&FilesSysLock);
     return size;
-
-  } else {
-    
+  } 
+  else 
+  {
     struct thread* t = thread_current();
     struct file* my_file = get_file(fd)->file_ptr;
 
@@ -362,9 +368,9 @@ sys_write(int fd, void* buffer, int size)
       return -1;
     }
     int res;
-    lock_acquire(&files_sys_lock);
+    lock_acquire(&FilesSysLock);
     res = file_write(my_file,buffer,size);
-    lock_release(&files_sys_lock);
+    lock_release(&FilesSysLock);
     return res;
   }
 
@@ -373,7 +379,6 @@ sys_write(int fd, void* buffer, int size)
 void
 write_handler(struct intr_frame *cur_frame)
 {
-
   for (int i = 4; i <= 12; i += 4)
   {
     if (ptr_valid(cur_frame->esp+i))
@@ -398,13 +403,11 @@ sys_seek(int fd, unsigned pos)
   struct file* my_file = get_file(fd)->file_ptr;
 
   if (my_file == NULL)
-  {
     return;
-  }
 
-  lock_acquire(&files_sys_lock);
+  lock_acquire(&FilesSysLock);
   file_seek(my_file,pos);
-  lock_release(&files_sys_lock);
+  lock_release(&FilesSysLock);
 }
 
 void
@@ -431,15 +434,13 @@ sys_tell(int fd)
   struct file* my_file = get_file(fd)->file_ptr;
 
   if (my_file == NULL)
-  {
     return -1;
-  }
 
-  unsigned res;
-  lock_acquire(&files_sys_lock);
-  res = file_tell(my_file);
-  lock_release(&files_sys_lock);
-  return res;
+  unsigned ret;
+  lock_acquire(&FilesSysLock);
+  ret = file_tell(my_file);
+  lock_release(&FilesSysLock);
+  return ret;
 }
 
 void
@@ -462,9 +463,9 @@ sys_close(int fd)
     return;
   }
 
-  lock_acquire(&files_sys_lock);
+  lock_acquire(&FilesSysLock);
   file_close(my_file->file_ptr);
-  lock_release(&files_sys_lock);
+  lock_release(&FilesSysLock);
   list_remove(&my_file->elem);
   palloc_free_page(my_file);
 }
@@ -477,6 +478,7 @@ close_handler(struct intr_frame *cur_frame)
   sys_close(fd);
 }
 
+// searched the current thread for an opened file with its fd
 struct files_held* get_file(int fd){
     struct thread* t = thread_current();
     struct file* my_file = NULL;
