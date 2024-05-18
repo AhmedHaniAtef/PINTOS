@@ -4,6 +4,8 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/synch.h"
+#include "filesys/file.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -23,6 +25,12 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+struct open_file{
+   int fd;
+   struct file* ptr;
+   struct list_elem elem;
+};
 
 /* A kernel thread or user process.
 
@@ -92,11 +100,26 @@ struct thread
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
+    
+    /* Start pintos part 2. */
 
-#ifdef USERPROG
+    struct list open_file_list;          // list of opened files
+    struct list child_processe_list;	 // list of child of the process
+    struct thread* parent_thread;        // parent of the process
+    bool is_child_creation_success;
+    int child_status;
+    struct file* executable_file;
+    struct semaphore wait_child_sema;
+    struct semaphore parent_child_sync_sema;
+    int fd_last;
+    struct list_elem child_elem;
+
+    /* End pintos part 2. */
+
+
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
-#endif
+
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
