@@ -6,12 +6,14 @@
 #include "threads/vaddr.h"
 #include "threads/synch.h"
 
-static struct lock files_sys_lock;               /* lock for syschronization between files */
+// lock for synchronization between files during each system call 
+static struct lock files_sys_lock;               
 
 static void syscall_handler (struct intr_frame *);
 
-struct open_file* get_file(int fd);
+struct files_held* get_file(int fd);
 
+// handler for each system call in phase 2 
 void exit_handler(struct intr_frame *cur_frame);
 void exec_handler(struct intr_frame *cur_frame);
 void wait_handler(struct intr_frame *cur_frame);
@@ -39,7 +41,8 @@ syscall_handler (struct intr_frame *f UNUSED)
 { 
   struct intr_frame *cur_frame = f;
 
-  if (validate_void_ptr(cur_frame->esp))
+  // validate the stack pointer 
+  if (ptr_valid(cur_frame->esp))
     syscall_exit(-1);
   
   switch (*(int*)cur_frame->esp)
@@ -97,14 +100,13 @@ syscall_handler (struct intr_frame *f UNUSED)
     break;
 
   default:
-    // negative area
     break;
   }
 
 }
 
 bool 
-validate_void_ptr(const void* pt)
+ptr_valid(const void* pt)
 {
   if (pt == NULL || !is_user_vaddr(pt) || pagedir_get_page(thread_current()->pagedir, pt) == NULL) 
   {
@@ -116,16 +118,18 @@ validate_void_ptr(const void* pt)
 void
 syscall_exit(int status)
 {
-  struct thread* parent = thread_current()->parent;
-  printf("%s: exit(%d)\n", thread_current()->name, status);
-  if(parent) parent->child_status = status;
+  struct thread* cur = thread_current();
+  struct thread* parent = cur->parent;
+  printf("%s: exit(%d)\n", cur->name, status);
+  if(parent) 
+    parent->child_status = status;
   thread_exit();
 }
 
 void
 exit_handler(struct intr_frame *cur_frame)
 {
-  if (validate_void_ptr(cur_frame->esp+4))
+  if (ptr_valid(cur_frame->esp+4))
     syscall_exit(-1);
   int status = *((int*)cur_frame->esp + 1);
   syscall_exit(status);
@@ -140,13 +144,14 @@ sys_exec(char* file_name)
 void
 exec_handler(struct intr_frame *cur_frame)
 { 
-  if (validate_void_ptr(cur_frame->esp+4))
+  if (ptr_valid(cur_frame->esp+4))
     syscall_exit(-1);
-  char* name = (char*)(*((int*)cur_frame->esp + 1));
+  char* process_name = (char*)(*((int*)cur_frame->esp + 1));
 
-  if (name == NULL) syscall_exit(-1);
+  if (process_name == NULL) 
+    syscall_exit(-1);
   lock_acquire(&files_sys_lock);
-  cur_frame->eax = sys_exec(name);
+  cur_frame->eax = sys_exec(process_name);
   lock_release(&files_sys_lock);
 }
 
@@ -159,7 +164,7 @@ sys_wait(int pid)
 void
 wait_handler(struct intr_frame *cur_frame)
 {
-  if (validate_void_ptr(cur_frame->esp+4))
+  if (ptr_valid(cur_frame->esp+4))
     syscall_exit(-1);
   int tid = *((int*)cur_frame->esp + 1);
 
@@ -183,7 +188,7 @@ create_handler(struct intr_frame *cur_frame)
 {
   for (int i = 4; i <= 8; i += 4)
   {
-    if (validate_void_ptr(cur_frame->esp+i))
+    if (ptr_valid(cur_frame->esp+i))
       syscall_exit(-1);
   }
   
@@ -211,7 +216,7 @@ void
 remove_handler(struct intr_frame *cur_frame)
 {
 
-  if (validate_void_ptr(cur_frame->esp+4))
+  if (ptr_valid(cur_frame->esp+4))
     syscall_exit(-1);
 
   char* name = (char*)(*((int*)cur_frame->esp + 1));
@@ -224,28 +229,28 @@ remove_handler(struct intr_frame *cur_frame)
 int
 sys_open(char* name)
 {
-  struct open_file* open = palloc_get_page(0);
+  struct files_held* open = palloc_get_page(0);
   if (open == NULL) 
   {
     palloc_free_page(open);
     return -1;
   }
   lock_acquire(&files_sys_lock);
-  open->ptr = filesys_open(name);
+  open->file_ptr = filesys_open(name);
   lock_release(&files_sys_lock);
-  if (open->ptr == NULL)
+  if (open->file_ptr == NULL)
   {
     return -1;
   }
   open->fd = ++thread_current()->fd_last;
-  list_push_back(&thread_current()->open_file_list,&open->elem);
+  list_push_back(&thread_current()->files_held_list,&open->elem);
   return open->fd;
 }
 
 void
 open_handler(struct intr_frame *cur_frame)
 {
-  if (validate_void_ptr(cur_frame->esp+4))
+  if (ptr_valid(cur_frame->esp+4))
     syscall_exit(-1);
 
   char* name = (char*)(*((int*)cur_frame->esp + 1));
@@ -259,7 +264,7 @@ int
 sys_filesize(int fd)
 {
   struct thread* t = thread_current();
-  struct file* my_file = get_file(fd)->ptr;
+  struct file* my_file = get_file(fd)->file_ptr;
 
   if (my_file == NULL)
   {
@@ -275,7 +280,7 @@ sys_filesize(int fd)
 void
 filesize_handler(struct intr_frame *cur_frame)
 {
-  if (validate_void_ptr(cur_frame->esp+4))
+  if (ptr_valid(cur_frame->esp+4))
     syscall_exit(-1);
   int fd = *((int*)cur_frame->esp + 1);
 
@@ -299,7 +304,7 @@ sys_read(int fd,void* buffer, int size)
   } else {
 
     struct thread* t = thread_current();
-    struct file* my_file = get_file(fd)->ptr;
+    struct file* my_file = get_file(fd)->file_ptr;
 
     if (my_file == NULL)
     {
@@ -319,7 +324,7 @@ read_handler(struct intr_frame *cur_frame)
 {
   for (int i = 4; i <= 12; i += 4)
   {
-    if (validate_void_ptr(cur_frame->esp+i))
+    if (ptr_valid(cur_frame->esp+i))
       syscall_exit(-1);
   }
 
@@ -329,7 +334,7 @@ read_handler(struct intr_frame *cur_frame)
   buffer = (void*)(*((int*)cur_frame->esp + 2));
   size = *((int*)cur_frame->esp + 3);
 
-  if (validate_void_ptr(buffer + size))
+  if (ptr_valid(buffer + size))
     syscall_exit(-1);
   
   cur_frame->eax = sys_read(fd,buffer,size);
@@ -350,7 +355,7 @@ sys_write(int fd, void* buffer, int size)
   } else {
     
     struct thread* t = thread_current();
-    struct file* my_file = get_file(fd)->ptr;
+    struct file* my_file = get_file(fd)->file_ptr;
 
     if (my_file == NULL)
     {
@@ -371,7 +376,7 @@ write_handler(struct intr_frame *cur_frame)
 
   for (int i = 4; i <= 12; i += 4)
   {
-    if (validate_void_ptr(cur_frame->esp+i))
+    if (ptr_valid(cur_frame->esp+i))
       syscall_exit(-1);
   }
 
@@ -390,7 +395,7 @@ void
 sys_seek(int fd, unsigned pos)
 {
   struct thread* t = thread_current();
-  struct file* my_file = get_file(fd)->ptr;
+  struct file* my_file = get_file(fd)->file_ptr;
 
   if (my_file == NULL)
   {
@@ -407,7 +412,7 @@ seek_handler(struct intr_frame *cur_frame)
 {
   for (int i = 4; i <= 8; i += 4)
   {
-    if (validate_void_ptr(cur_frame->esp+i))
+    if (ptr_valid(cur_frame->esp+i))
       syscall_exit(-1);
   }
 
@@ -423,7 +428,7 @@ unsigned
 sys_tell(int fd)
 { 
   struct thread* t = thread_current();
-  struct file* my_file = get_file(fd)->ptr;
+  struct file* my_file = get_file(fd)->file_ptr;
 
   if (my_file == NULL)
   {
@@ -440,7 +445,7 @@ sys_tell(int fd)
 void
 tell_handler(struct intr_frame *cur_frame)
 {
-  validate_void_ptr(cur_frame->esp + 4);
+  ptr_valid(cur_frame->esp + 4);
   int fd = *((int*)cur_frame->esp + 1);
 
   cur_frame->eax = sys_tell(fd);
@@ -450,7 +455,7 @@ void
 sys_close(int fd)
 {
   struct thread* t = thread_current();
-  struct open_file* my_file = get_file(fd);
+  struct files_held* my_file = get_file(fd);
 
   if (my_file == NULL)
   {
@@ -458,7 +463,7 @@ sys_close(int fd)
   }
 
   lock_acquire(&files_sys_lock);
-  file_close(my_file->ptr);
+  file_close(my_file->file_ptr);
   lock_release(&files_sys_lock);
   list_remove(&my_file->elem);
   palloc_free_page(my_file);
@@ -467,18 +472,18 @@ sys_close(int fd)
 void
 close_handler(struct intr_frame *cur_frame)
 {
-  validate_void_ptr(cur_frame->esp + 4);
+  ptr_valid(cur_frame->esp + 4);
   int fd = *((int*)cur_frame->esp + 1);
   sys_close(fd);
 }
 
-struct open_file* get_file(int fd){
+struct files_held* get_file(int fd){
     struct thread* t = thread_current();
     struct file* my_file = NULL;
-    for (struct list_elem* e = list_begin (&t->open_file_list); e != list_end (&t->open_file_list);
+    for (struct list_elem* e = list_begin (&t->files_held_list); e != list_end (&t->files_held_list);
     e = list_next (e))
     {
-      struct open_file* opened_file = list_entry (e, struct open_file, elem);
+      struct files_held* opened_file = list_entry (e, struct files_held, elem);
       if (opened_file->fd == fd)
       {
         return opened_file;

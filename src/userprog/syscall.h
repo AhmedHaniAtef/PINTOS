@@ -6,7 +6,7 @@
 void syscall_init (void);
 
 /* check if the pointer is valid */
-bool validate_void_ptr(const void* pt);
+bool ptr_valid(const void* pt);
 
 void syscall_exit(int status);
 

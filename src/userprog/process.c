@@ -20,6 +20,8 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+struct thread *child_exist (struct thread *parent, tid_t tid);
+void release_opened_files (struct thread *cur);
 
 void 
 split(char* file_name , void** esp );
@@ -68,14 +70,15 @@ process_execute (const char *file_name)
     palloc_free_page (fn_copy_0);
     palloc_free_page(fn_copy_1);
   }
-    
-  sema_down(&thread_current()->parent_child_sync);/*The current thread waits until the child thread has finished initializing*/
-   if (fn_copy_1)
+
+  // block the parent until the child is created successfully
+  sema_down(&thread_current()->parent_child_sync);
+
+  if (fn_copy_1)
   {
     palloc_free_page(fn_copy_1);
   }
   
-
   if (!thread_current()->child_creation_success) 
   {
     return TID_ERROR;
@@ -108,17 +111,16 @@ start_process (void *file_name_)
  
   if (success) 
   { 
-    
+    // in case of child creation successfully wake up the parent and make the link between parent and child then block child to execute parent 
     parent-> child_creation_success = true;
     list_push_back(&parent->child,&child->child_elem);
     sema_up(&parent->parent_child_sync);
     sema_down(&child->parent_child_sync);
   }
   else{
-
-      
-      sema_up(&parent->parent_child_sync);
-      syscall_exit(-1); 
+    // if there is any error wake up the parent and exit with -1
+    sema_up(&parent->parent_child_sync);
+    syscall_exit(-1); 
   }
   palloc_free_page (file_name);
 
@@ -146,25 +148,33 @@ int
 process_wait (tid_t child_tid) 
 {
   struct thread* parent = thread_current();
-  struct thread* child = NULL;
-  for (struct list_elem* e = list_begin (&parent->child); e != list_end (&parent->child);
-  e = list_next (e))
-  {
-    struct thread* child_process = list_entry (e, struct thread, child_elem);
-    if (child_process->tid == child_tid)
-    {
-      child = child_process;
-      break;
-    }
-  }
+  struct thread* child = child_exist(parent, child_tid);
+  
+  // if child found wake up the child and block the parent until child terminates
   if(child != NULL){
     list_remove(&child->child_elem);
     sema_up(&child->parent_child_sync);
-    sema_down(&parent->wait_child_sema);
+    sema_down(&parent->wait_child);
     return parent->child_status;
   }
   return -1;
 }
+
+// this function returns the child if found and null if not
+struct thread *child_exist (struct thread *parent, tid_t tid)
+{
+  struct thread* child_process = NULL;
+  for (struct list_elem* e = list_begin (&parent->child); e != list_end (&parent->child); e = list_next (e))
+  {
+    child_process = list_entry (e, struct thread, child_elem);
+    if (child_process->tid == tid)
+      break;
+    else
+      child_process = NULL;
+  }
+  return child_process;
+}
+
 
 /* Free the current process's resources. */
 void
@@ -173,28 +183,20 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
-  while (!list_empty(&cur->open_file_list))
-  {
-    struct open_file* opened_file = list_entry(list_pop_back(&cur->open_file_list), struct open_file, elem);
-    file_close(opened_file->ptr);
-    palloc_free_page(opened_file);
-  }
+  release_opened_files(cur);
 
-  while (!list_empty(&cur->child))
-  {
-    struct thread* child = list_entry(list_pop_back(&cur->child), struct thread, child_elem);
-    child->parent = NULL;
-    sema_up(&child->parent_child_sync);
-  }
+  wakeup_childs(cur);
   
+  // release the executable file so any other thread can run it 
   if (cur->executable_file != NULL)
   {
     file_allow_write(cur->executable_file);
     file_close(cur->executable_file);
   }
 
+  // if parent is waiting for this child wake up it to keep executing
   if (cur->parent != NULL)
-    sema_up(&cur->parent->wait_child_sema);
+    sema_up(&cur->parent->wait_child);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -212,6 +214,27 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+}
+
+void release_opened_files (struct thread *cur)
+{
+  while (!list_empty(&cur->files_held_list))
+  {
+    struct files_held* opened_file = list_entry(list_pop_back(&cur->files_held_list), struct files_held, elem);
+    file_close(opened_file->file_ptr);
+    palloc_free_page(opened_file);
+  }
+}
+
+void wakeup_childs (struct thread *cur)
+{
+  while (!list_empty(&cur->child))
+  {
+    struct thread* child = list_entry(list_pop_back(&cur->child), struct thread, child_elem);
+    // unlink the childs and the parent (make them orphans)
+    child->parent = NULL;
+    sema_up(&child->parent_child_sync);
+  }
 }
 
 /* Sets up the CPU for running user code in the current

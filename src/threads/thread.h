@@ -26,9 +26,9 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
-struct open_file{
+struct files_held{
    int fd;
-   struct file* ptr;
+   struct file* file_ptr;
    struct list_elem elem;
 };
 
@@ -90,39 +90,40 @@ struct open_file{
    blocked state is on a semaphore wait list. */
 struct thread
   {
-    /* Owned by thread.c. */
-    tid_t tid;                          /* Thread identifier. */
-    enum thread_status status;          /* Thread state. */
-    char name[16];                      /* Name (for debugging purposes). */
-    uint8_t *stack;                     /* Saved stack pointer. */
-    int priority;                       /* Priority. */
-    struct list_elem allelem;           /* List element for all threads list. */
+   /* Owned by thread.c. */
+   tid_t tid;                          /* Thread identifier. */
+   enum thread_status status;          /* Thread state. */
+   char name[16];                      /* Name (for debugging purposes). */
+   uint8_t *stack;                     /* Saved stack pointer. */
+   int priority;                       /* Priority. */
+   struct list_elem allelem;           /* List element for all threads list. */
+   /* Shared between thread.c and synch.c. */
+   struct list_elem elem;              /* List element. */
+   
+   // list of childs of this process
+   struct list child;
+   // pointer to parent process
+   struct thread* parent;    
+   // return status after child creation: true if successfully and false if not
+   bool child_creation_success;
+   // used for check the last child terminated status
+   int child_status;
+   // the executable file this thread run in 
+   struct file* executable_file;
+   // this semaphore used to block the parent until the child terminated when wait system call is called
+   struct semaphore wait_child;
+   // this semaphore used to synchronize the parent with child during the creation of child
+   struct semaphore parent_child_sync;
+   int fd_last;
+   // used in child process to keep the link between it and the parent
+   struct list_elem child_elem;
+   // list of opened files in this process
+   struct list files_held_list;          
 
-    /* Shared between thread.c and synch.c. */
-    struct list_elem elem;              /* List element. */
-    
-    /* Start pintos part 2. */
-
-    struct list open_file_list;          // list of opened files
-    struct list child;	 // list of child of the process
-    struct thread* parent;        // parent of the process
-    bool child_creation_success;
-    int child_status;
-    struct file* executable_file;
-    struct semaphore wait_child_sema;
-    struct semaphore parent_child_sync;
-    int fd_last;
-    struct list_elem child_elem;
-
-    /* End pintos part 2. */
-
-
-    /* Owned by userprog/process.c. */
-    uint32_t *pagedir;                  /* Page directory. */
-
-
-    /* Owned by thread.c. */
-    unsigned magic;                     /* Detects stack overflow. */
+   /* Owned by userprog/process.c. */
+   uint32_t *pagedir;                  /* Page directory. */
+   /* Owned by thread.c. */
+   unsigned magic;                     /* Detects stack overflow. */
   };
 
 /* If false (default), use round-robin scheduler.
