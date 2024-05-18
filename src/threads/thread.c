@@ -455,7 +455,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
 
-  sema_init(&t->parent_child_sync_sema,0);
+  sema_init(&t->parent_child_sync,0);
   sema_init(&t->wait_child_sema,0);
   list_init(&t->open_file_list);
   list_init(&t->child_processe_list);
