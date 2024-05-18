@@ -104,8 +104,8 @@ struct thread
     /* Start pintos part 2. */
 
     struct list open_file_list;          // list of opened files
-    struct list child_processe_list;	 // list of child of the process
-    struct thread* parent_thread;        // parent of the process
+    struct list child;	 // list of child of the process
+    struct thread* parent;        // parent of the process
     bool child_creation_success;
     int child_status;
     struct file* executable_file;

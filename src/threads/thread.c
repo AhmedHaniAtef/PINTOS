@@ -458,8 +458,8 @@ init_thread (struct thread *t, const char *name, int priority)
   sema_init(&t->parent_child_sync,0);
   sema_init(&t->wait_child_sema,0);
   list_init(&t->open_file_list);
-  list_init(&t->child_processe_list);
-  t->parent_thread = running_thread();
+  list_init(&t->child);
+  t->parent = running_thread();
   t->child_status = -2;
   t->fd_last = 2;
 

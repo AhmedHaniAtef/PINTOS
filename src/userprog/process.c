@@ -70,7 +70,10 @@ process_execute (const char *file_name)
   }
     
   sema_down(&thread_current()->parent_child_sync);/*The current thread waits until the child thread has finished initializing*/
-  palloc_free_page(fn_copy_1);
+   if (fn_copy_1)
+  {
+    palloc_free_page(fn_copy_1);
+  }
   
 
   if (!thread_current()->child_creation_success) 
@@ -113,11 +116,11 @@ start_process (void *file_name_)
   }
   else{
 
-      palloc_free_page (file_name);
+      
       sema_up(&parent->parent_child_sync);
-      sys_exit(-1); 
+      syscall_exit(-1); 
   }
-  
+  palloc_free_page (file_name);
 
 
   /* Start the user process by simulating a return from an
@@ -144,7 +147,7 @@ process_wait (tid_t child_tid)
 {
   struct thread* parent = thread_current();
   struct thread* child = NULL;
-  for (struct list_elem* e = list_begin (&parent->child_processe_list); e != list_end (&parent->child_processe_list);
+  for (struct list_elem* e = list_begin (&parent->child); e != list_end (&parent->child);
   e = list_next (e))
   {
     struct thread* child_process = list_entry (e, struct thread, child_elem);
@@ -156,7 +159,7 @@ process_wait (tid_t child_tid)
   }
   if(child != NULL){
     list_remove(&child->child_elem);
-    sema_up(&child->parent_child_sync_sema);
+    sema_up(&child->parent_child_sync);
     sema_down(&parent->wait_child_sema);
     return parent->child_status;
   }
@@ -177,11 +180,11 @@ process_exit (void)
     palloc_free_page(opened_file);
   }
 
-  while (!list_empty(&cur->child_processe_list))
+  while (!list_empty(&cur->child))
   {
-    struct thread* child = list_entry(list_pop_back(&cur->child_processe_list), struct thread, child_elem);
-    child->parent_thread = NULL;
-    sema_up(&child->parent_child_sync_sema);
+    struct thread* child = list_entry(list_pop_back(&cur->child), struct thread, child_elem);
+    child->parent = NULL;
+    sema_up(&child->parent_child_sync);
   }
   
   if (cur->executable_file != NULL)
@@ -190,8 +193,8 @@ process_exit (void)
     file_close(cur->executable_file);
   }
 
-  if (cur->parent_thread != NULL)
-    sema_up(&cur->parent_thread->wait_child_sema);
+  if (cur->parent != NULL)
+    sema_up(&cur->parent->wait_child_sema);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */

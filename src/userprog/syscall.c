@@ -116,7 +116,7 @@ validate_void_ptr(const void* pt)
 void
 syscall_exit(int status)
 {
-  struct thread* parent = thread_current()->parent_thread;
+  struct thread* parent = thread_current()->parent;
   printf("%s: exit(%d)\n", thread_current()->name, status);
   if(parent) parent->child_status = status;
   thread_exit();
