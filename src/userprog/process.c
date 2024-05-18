@@ -40,42 +40,41 @@ void parse(char* file_name , void** esp ) ;
 tid_t
 process_execute (const char *file_name) 
 {
-  char *fn_copy_0 ,*fn_copy_1; //fn_copy_0 file name , fn_copy_1 name of process
-  char* cm ;                    
+  char *args ,*fileName, * savePointer ; 
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy_0 = palloc_get_page (0);
-  fn_copy_1= palloc_get_page (0);  
+  args = palloc_get_page (0);
+  fileName= palloc_get_page (0);  
 
 
-  if (fn_copy_0 == NULL|| fn_copy_1 == NULL){
-    palloc_free_page(fn_copy_0);
-    palloc_free_page(fn_copy_1);
+  if (args == NULL|| fileName == NULL){
+    palloc_free_page(args);
+    palloc_free_page(fileName);
     return TID_ERROR;
   }
 
-  strlcpy (fn_copy_0, file_name, PGSIZE);
-  strlcpy(fn_copy_1, file_name , PGSIZE) ; 
+  strlcpy (args, file_name, PGSIZE);
+  strlcpy(fileName, file_name , PGSIZE) ; 
 
-  fn_copy_1 = strtok_r(fn_copy_1 , " " , &cm ) ;/*'fn_copy_1'holds the name of the program to be executed, without any arguments*/
+  fileName = strtok_r(fileName , " " , &savePointer ) ;/*'fn_copy_1'holds the name of the program to be executed, without any arguments*/
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (fn_copy_1, PRI_DEFAULT, start_process, fn_copy_0);
+  tid = thread_create (fileName, PRI_DEFAULT, start_process, args);
  
   if (tid == TID_ERROR)
   {
-    palloc_free_page (fn_copy_0);
-    palloc_free_page(fn_copy_1);
+    palloc_free_page (args);
+    palloc_free_page(fileName);
   }
 
   // block the parent until the child is created successfully
   sema_down(&thread_current()->parent_child_sync);
 
-  if (fn_copy_1)
+  if (fileName)
   {
-    palloc_free_page(fn_copy_1);
+    palloc_free_page(fileName);
   }
   
   if (!thread_current()->child_creation_success) 
