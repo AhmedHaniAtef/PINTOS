@@ -23,8 +23,7 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 struct thread *child_exist (struct thread *parent, tid_t tid);
 void release_opened_files (struct thread *cur);
 
-void 
-split(char* file_name , void** esp );
+void parse(char* file_name , void** esp ) ;
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -344,30 +343,28 @@ load (const char *file_name, void (**eip) (void), void **esp)
   off_t file_ofs;
   bool success = false;
   int i;
- 
+
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
     goto done;
   process_activate ();
-
-  char *token, *next;
-  token = palloc_get_page (0);
-  if (token == NULL) {
+  char * entry, * savePtr;
+  entry = palloc_get_page(0);
+  if(entry == NULL)
     goto done;
-  }
-  strlcpy(token, file_name, PGSIZE);
-  token = strtok_r (token, " ", &next);
+  strlcpy(entry, file_name, PGSIZE);
+  entry = strtok_r(entry , " " , &savePtr ) ;
 
   /* Open executable file. */
-  file = filesys_open (token);
+  file = filesys_open (entry);
   if (file == NULL) 
-    {
-      printf ("load: %s: open failed\n", file_name);
-      success = 0;
-      goto done;
-    }
-  
+  {
+    printf ("load: %s: open failed\n", file_name);
+    success = 0;
+    goto done;
+  }
+
   t->executable_file = file;
   file_deny_write(file);
 
@@ -389,11 +386,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
   for (i = 0; i < ehdr.e_phnum; i++) 
     {
       struct Elf32_Phdr phdr;
- 
+
       if (file_ofs < 0 || file_ofs > file_length (file))
         goto done;
       file_seek (file, file_ofs);
- 
+
       if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
         goto done;
       file_ofs += sizeof phdr;
@@ -442,19 +439,21 @@ load (const char *file_name, void (**eip) (void), void **esp)
           break;
         }
     }
- 
+
   /* Set up stack. */
+
   if (!setup_stack (esp))
     goto done;
- 
-  split(file_name , esp);
-  palloc_free_page(token);
- 
+  parse(file_name,esp);
+  palloc_free_page(entry);
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
+
   success = true;
+
  done:
   /* We arrive here whether the load is successful or not. */
+  // file_close (file);
   return success;
 }
 
@@ -605,21 +604,19 @@ install_page (void *upage, void *kpage, bool writable)
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
 }
-
 int debug = 0 ; 
 int debug_length_byte = 16 ;
 
-void 
-split(char* file_name , void** esp ) {
+void parse(char* file_name , void** esp ) {
 
   if(debug)hex_dump((uintptr_t)*esp,*esp, sizeof(char)*debug_length_byte, true);  
   char* token = file_name;
   char* next; 
   int argc = 0;
-  int* arg_address = calloc(30, sizeof(int)); // 30 is the maximum number of arguments allowed  
+  int* arg_address = calloc(30, sizeof(int)); 
 
-  // push the addresses of each argument 
- for(token = strtok_r(file_name , " " ,  &next) ; token != NULL ; token = strtok_r(NULL , " " , &next)) {
+ for(token = strtok_r(file_name , " " ,  &next) ; token != NULL ; token = strtok_r(NULL , " " , &next))
+  {
    *esp -= (strlen(token) + 1 ) ; 
    memcpy(*esp , token , strlen(token)+ 1 ) ; 
    arg_address[argc++] = *esp ; 
