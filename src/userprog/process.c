@@ -39,51 +39,46 @@ split(char* file_name , void** esp );
 tid_t
 process_execute (const char *file_name) 
 {
-  char* fn_copy;
-  char* name ; 
-  char* next ;
+  char *fn_copy_0 ,*fn_copy_1; //fn_copy_0 file name , fn_copy_1 name of process
+  char* cm ;                    
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
+  fn_copy_0 = palloc_get_page (0);
+  fn_copy_1= palloc_get_page (0);  
 
-  name = palloc_get_page (0);   // allocate page for the file name
 
-  if (fn_copy == NULL || name == NULL) {
-    palloc_free_page(fn_copy);
-    palloc_free_page(name);
+  if (fn_copy_0 == NULL|| fn_copy_1 == NULL){
+    palloc_free_page(fn_copy_0);
+    palloc_free_page(fn_copy_1);
     return TID_ERROR;
   }
 
-  strlcpy (fn_copy, file_name, PGSIZE); // it check for null parameter in string.s 
+  strlcpy (fn_copy_0, file_name, PGSIZE);
+  strlcpy(fn_copy_1, file_name , PGSIZE) ; 
 
-  /* Extract the exec_name from the file name */ 
-  strlcpy(name , file_name , PGSIZE) ; 
-  name = strtok_r(name , " " , &next ) ; 
+  fn_copy_1 = strtok_r(fn_copy_1 , " " , &cm ) ;/*'fn_copy_1'holds the name of the program to be executed, without any arguments*/
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (name, PRI_DEFAULT, start_process, fn_copy);
-
+  tid = thread_create (fn_copy_1, PRI_DEFAULT, start_process, fn_copy_0);
+ 
   if (tid == TID_ERROR)
   {
-  	palloc_free_page(name);
-    palloc_free_page(fn_copy);
-    return TID_ERROR;
+    palloc_free_page (fn_copy_0);
+    palloc_free_page(fn_copy_1);
   }
+    
+  sema_down(&thread_current()->parent_child_sync);/*The current thread waits until the child thread has finished initializing*/
+  palloc_free_page(fn_copy_1);
+  
 
-  sema_down(&thread_current()->parent_child_sync_sema);
-
-  if (name)
-  {
-    palloc_free_page(name);
-  }
-
-  if (!thread_current()->is_child_creation_success) 
+  if (!thread_current()->child_creation_success) 
   {
     return TID_ERROR;
   }
-     
+
+  
   return tid;
 }
 
@@ -97,6 +92,7 @@ start_process (void *file_name_)
   bool success;
 
   /* Initialize interrupt frame and load executable. */
+   /* If load failed, quit. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
@@ -104,24 +100,25 @@ start_process (void *file_name_)
 
   success = load (file_name, &if_.eip, &if_.esp);
 
-  struct thread* child = thread_current();
-  struct thread* parent = child->parent_thread;
-
+    struct thread* child = thread_current();
+    struct thread* parent = child->parent;
+ 
   if (success) 
-  {
-    parent->is_child_creation_success = true;
-    list_push_back(&parent->child_processe_list,&child->child_elem);
-    sema_up(&parent->parent_child_sync_sema);
-    sema_down(&child->parent_child_sync_sema);
+  { 
+    
+    parent-> child_creation_success = true;
+    list_push_back(&parent->child,&child->child_elem);
+    sema_up(&parent->parent_child_sync);
+    sema_down(&child->parent_child_sync);
   }
+  else{
 
-  /* If load failed, quit. */
-  palloc_free_page (file_name);
-  if (!success) 
-  {
-    sema_up(&parent->parent_child_sync_sema);
-    syscall_exit(-1);
+      palloc_free_page (file_name);
+      sema_up(&parent->parent_child_sync);
+      sys_exit(-1); 
   }
+  
+
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
