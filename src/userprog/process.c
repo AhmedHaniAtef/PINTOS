@@ -20,6 +20,7 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+void  parse(char* file_name , void** esp );
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -28,38 +29,37 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *file_name) 
 {
-  char *fn_copy_0 ,*fn_copy_1; //fn_copy_0 file name , fn_copy_1 name of process
-  char* cm ;                    
+  char *args,*fileName , * savePointer; 
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy_0 = palloc_get_page (0);
-  fn_copy_1= palloc_get_page (0);  
+  args = palloc_get_page (0);
+  fileName= palloc_get_page (0);  
 
 
-  if (fn_copy_0 == NULL|| fn_copy_1 == NULL){
-    palloc_free_page(fn_copy_0);
-    palloc_free_page(fn_copy_1);
+  if (args == NULL|| fileName == NULL){
+    palloc_free_page(args);
+    palloc_free_page(fileName);
     return TID_ERROR;
   }
 
-  strlcpy (fn_copy_0, file_name, PGSIZE);
-  strlcpy(fn_copy_1, file_name , PGSIZE) ; 
+  strlcpy (args, file_name, PGSIZE);
+  strlcpy(fileName, file_name , PGSIZE) ; 
 
-  fn_copy_1 = strtok_r(fn_copy_1 , " " , &cm ) ;/*'fn_copy_1'holds the name of the program to be executed, without any arguments*/
+  fileName = strtok_r(fileName , " " , &savePointer ) ;
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (fn_copy_1, PRI_DEFAULT, start_process, fn_copy_0);
+  tid = thread_create (fileName, PRI_DEFAULT, start_process, args);
  
   if (tid == TID_ERROR)
   {
-    palloc_free_page (fn_copy_0);
-    palloc_free_page(fn_copy_1);
+    palloc_free_page (args);
+    palloc_free_page(fileName);
   }
     
   sema_down(&thread_current()->parent_child_sync);/*The current thread waits until the child thread has finished initializing*/
-  palloc_free_page(fn_copy_1);
+  palloc_free_page(fileName);
   
 
   if (!thread_current()->child_creation_success) 
@@ -262,9 +262,15 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (t->pagedir == NULL) 
     goto done;
   process_activate ();
+  char * entry, * savePtr;
+  entry = palloc_get_page(0);
+  if(entry == NULL)
+    goto done;
+  strlcpy(entry, file_name, PGSIZE);
+  entry = strtok_r(entry , " " , &savePtr ) ;
 
   /* Open executable file. */
-  file = filesys_open (file_name);
+  file = filesys_open (entry);
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
@@ -344,9 +350,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
+
   if (!setup_stack (esp))
     goto done;
-
+  parse(file_name,esp);
+  palloc_free_page(entry);
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
 
@@ -504,4 +512,73 @@ install_page (void *upage, void *kpage, bool writable)
      address, then map our page there. */
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
+}
+int debug = 0 ; 
+int debug_length_byte = 16 ;
+
+void parse(char* file_name , void** esp ) {
+
+  if(debug)hex_dump((uintptr_t)*esp,*esp, sizeof(char)*debug_length_byte, true);  
+  char* token = file_name;
+  char* next; 
+  int argc = 0;
+  int* arg_address = calloc(30, sizeof(int)); 
+
+ for(token = strtok_r(file_name , " " ,  &next) ; token != NULL ; token = strtok_r(NULL , " " , &next))
+  {
+   *esp -= (strlen(token) + 1 ) ; 
+   memcpy(*esp , token , strlen(token)+ 1 ) ; 
+   arg_address[argc++] = *esp ; 
+  if(debug)hex_dump((uintptr_t)*esp,*esp, sizeof(char)*8, true);  
+   ASSERT(argc < 30) ;
+
+ }
+
+  while((int)*esp%4!=0)
+  {
+    *esp -= 1; // one byte until it is a multiple of 4
+    char x = '\0';
+    memcpy(*esp,&x,1);
+  }
+
+  int z = 0 ; 
+  *esp -= sizeof(int) ;
+  memcpy(*esp , &z , sizeof(int)) ; 
+  if(debug)hex_dump((uintptr_t)*esp,*esp, sizeof(char)*8, true);  
+
+
+  // push the address of every argument from right to left (Yes, even the first argument)
+  for(int i=argc-1;i>=0;i--)
+  {
+    *esp-=sizeof(int);
+     memcpy(*esp,&arg_address[i],sizeof(int));
+       if(debug)hex_dump((uintptr_t)*esp,*esp, sizeof(char)*8, true);  
+  }
+
+
+
+  // push pointer to the pointer of the first argument in the stack 
+  *esp -= sizeof(int);
+  int target_pointer = *esp + sizeof(int) ;  
+  memcpy(*esp , &target_pointer , sizeof(int)) ; 
+  if(debug)hex_dump((uintptr_t)*esp,*esp, sizeof(char)*8, true);  
+
+
+
+  // push argc 
+   *esp -=sizeof(int) ; 
+   memcpy(*esp , &argc , sizeof(int));
+   if(debug)hex_dump((uintptr_t)*esp,*esp, sizeof(char)*8, true);  
+
+
+
+
+  // push fake return zero 
+  *esp = *esp - sizeof(int ) ; 
+  memcpy(*esp , &z , sizeof(int )) ; 
+  if(debug)hex_dump((uintptr_t)*esp,*esp, sizeof(char)*8, true);  
+
+
+  free(arg_address); // de-allocate the the temporary array 
+  
 }
